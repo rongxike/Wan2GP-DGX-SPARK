@@ -1,10 +1,12 @@
 import os
 import sys
+import platform
 import shutil
 import tarfile
 import tempfile
 import typing
 import importlib.util
+import subprocess
 from pathlib import Path
 
 import requests
@@ -114,14 +116,27 @@ def download_ffmpeg(bin_directory: typing.Optional[typing.Union[str, Path]] = No
     _ensure_library_path()
 
     def _resolve_path(name: str) -> typing.Optional[Path]:
+        def _is_runnable(binary_path: Path) -> bool:
+            # Ignore stale binaries with the wrong architecture (e.g. x86_64 on ARM64).
+            try:
+                subprocess.run(
+                    [str(binary_path), "-version"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                )
+                return True
+            except OSError:
+                return False
+
         # Check ffmpeg_bins folder first
         candidate = bin_dir / _candidate_name(name)
-        if candidate.exists():
+        if candidate.exists() and _is_runnable(candidate):
             return candidate
         # Check repo root folder (some users put ffmpeg there)
         repo_root = bin_dir.parent
         candidate_root = repo_root / _candidate_name(name)
-        if candidate_root.exists():
+        if candidate_root.exists() and _is_runnable(candidate_root):
             return candidate_root
         # Fall back to system PATH
         resolved = shutil.which(name)
@@ -218,7 +233,11 @@ def download_ffmpeg(bin_directory: typing.Optional[typing.Union[str, Path]] = No
         response.raise_for_status()
         assets = response.json().get("assets", [])
         if sys.platform.startswith("linux"):
-            keywords = ["linux64", "gpl"]
+            machine = platform.machine().lower()
+            if machine in {"aarch64", "arm64"}:
+                keywords = ["linuxarm64", "gpl"]
+            else:
+                keywords = ["linux64", "gpl"]
         elif sys.platform == "darwin":
             keywords = ["macos64", "gpl"]
         else:
